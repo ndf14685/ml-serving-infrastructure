@@ -1,0 +1,65 @@
+# ============================================================
+# services/services.yaml — Kubernetes Services
+#
+# 📘 TÉCNICO:
+# - inference-api: NodePort para acceso externo desde Minikube
+# - preprocessing-service: ClusterIP (solo tráfico interno)
+# - model-manager: ClusterIP (solo tráfico interno)
+# ============================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-api
+  namespace: ml-serving
+  labels:
+    app: inference-api
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+spec:
+  selector:
+    app: inference-api
+  type: NodePort
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      nodePort: 30000
+      protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: preprocessing-service
+  namespace: ml-serving
+  labels:
+    app: preprocessing-service
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+spec:
+  selector:
+    app: preprocessing-service
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+      protocol: TCP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-manager
+  namespace: ml-serving
+  labels:
+    app: model-manager
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+spec:
+  selector:
+    app: model-manager
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8002
+      targetPort: 8002
+      protocol: TCP

@@ -1,0 +1,26 @@
+# ============================================================
+# datasources/prometheus.yml — Datasource de Grafana
+#
+# 🧒 PARA NIÑOS:
+# Aquí le decimos a Grafana dónde está la libreta del
+# detective (Prometheus). Es como darle la dirección
+# de la biblioteca donde están guardados todos los datos.
+#
+# 📘 TÉCNICO:
+# Provisioning automático del datasource de Prometheus.
+# Grafana lo carga al iniciar sin necesidad de configurar
+# manualmente desde la UI.
+# ============================================================
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST

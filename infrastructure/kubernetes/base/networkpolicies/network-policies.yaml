@@ -1,0 +1,124 @@
+# ============================================================
+# networkpolicies/network-policies.yaml — Network Policies
+#
+# 📘 TÉCNICO:
+# Principio de mínimo privilegio: cada pod solo puede
+# comunicarse con los pods que necesita.
+#
+# Flujo permitido:
+#   [externo] → inference-api
+#   inference-api → preprocessing-service
+#   inference-api → model-manager
+#   * → prometheus (scraping)
+# ============================================================
+
+# ── Default deny: todo el tráfico está bloqueado por defecto ─
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: ml-serving
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# ── Inference API: acepta tráfico externo (Ingress) ──────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: inference-api-ingress
+  namespace: ml-serving
+spec:
+  podSelector:
+    matchLabels:
+      app: inference-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - {}  # Acepta tráfico desde cualquier origen (Ingress Controller)
+  egress:
+    # Puede llamar a preprocessing-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: preprocessing-service
+      ports:
+        - port: 8001
+    # Puede llamar a model-manager
+    - to:
+        - podSelector:
+            matchLabels:
+              app: model-manager
+      ports:
+        - port: 8002
+    # DNS
+    - ports:
+        - port: 53
+          protocol: UDP
+
+---
+# ── Preprocessing Service: solo acepta desde inference-api ───
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: preprocessing-ingress
+  namespace: ml-serving
+spec:
+  podSelector:
+    matchLabels:
+      app: preprocessing-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: inference-api
+      ports:
+        - port: 8001
+
+---
+# ── Model Manager: solo acepta desde inference-api ───────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: model-manager-ingress
+  namespace: ml-serving
+spec:
+  podSelector:
+    matchLabels:
+      app: model-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: inference-api
+      ports:
+        - port: 8002
+
+---
+# ── Prometheus: puede hacer scraping a todos los pods ────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scraping
+  namespace: ml-serving
+spec:
+  podSelector: {}  # Aplica a todos los pods
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 8000
+        - port: 8001
+        - port: 8002

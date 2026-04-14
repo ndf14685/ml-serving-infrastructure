@@ -1,0 +1,101 @@
+# ============================================================
+# build-push.yml — Build y Push de imágenes al registry
+#
+# 🧒 PARA NIÑOS:
+# Cuando el código está aprobado y fusionado a la rama
+# principal, este pipeline toma el código, lo empaqueta
+# en una "caja" (imagen Docker) y la sube a la nube
+# para que luego el equipo de despliegue la use.
+#
+# 📘 TÉCNICO:
+# Se ejecuta en push a main. Construye y sube imágenes
+# a GitHub Container Registry (ghcr.io) con dos tags:
+# - SHA del commit (para trazabilidad exacta)
+# - "latest" (para conveniencia)
+# ============================================================
+
+name: Build & Push Docker Images
+
+on:
+  push:
+    branches: [main]
+    # Solo si hay cambios en los servicios o dockerfiles
+    paths:
+      - "services/**"
+      - ".github/workflows/build-push.yml"
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/ml-serving
+
+jobs:
+  build-push:
+    name: 🐳 Build & Push — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    # Permiso para subir al GitHub Container Registry
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service: [inference-api, preprocessing-service, model-manager]
+      fail-fast: false  # Si un servicio falla, los otros continúan
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login al GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # GITHUB_TOKEN es automático, no necesita configuración
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extraer metadata de la imagen
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          tags: |
+            # Tag con el SHA corto del commit (para trazabilidad)
+            type=sha,prefix=,format=short
+            # Tag latest en rama main
+            type=raw,value=latest,enable={{is_default_branch}}
+            # Tag semántico si hay git tags (v1.0.0)
+            type=semver,pattern={{version}}
+
+      - name: Build y Push imagen
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache entre runs para builds más rápidos
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+      # Guardar el digest exacto de la imagen para el deploy
+      - name: Guardar imagen digest
+        run: |
+          echo "${{ matrix.service }}=${{ steps.meta.outputs.digest }}" >> $GITHUB_STEP_SUMMARY
+
+  # Job que confirma que todas las imágenes se construyeron
+  all-images-built:
+    name: ✅ All images built
+    runs-on: ubuntu-latest
+    needs: build-push
+
+    steps:
+      - name: Confirmar build exitoso
+        run: echo "Todas las imágenes construidas y subidas exitosamente"

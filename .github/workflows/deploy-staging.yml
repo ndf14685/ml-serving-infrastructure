@@ -1,0 +1,183 @@
+# ============================================================
+# deploy-staging.yml — Deploy automático a Staging
+#
+# 🧒 PARA NIÑOS:
+# Después de que el código pasa todas las pruebas y las
+# imágenes se construyen, las desplegamos automáticamente
+# en el entorno de pruebas (staging) para verificar que
+# todo funciona juntos antes de llegar a producción.
+#
+# 📘 TÉCNICO:
+# Trigger: éxito del workflow build-push (push a main).
+# Jobs: deploy → integration-test → smoke-test.
+# Rollback automático si smoke tests fallan.
+# ============================================================
+
+name: Deploy — Staging
+
+on:
+  workflow_run:
+    workflows: ["Build & Push — Docker Images"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false  # No cancelar deploys en curso
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    environment: staging
+
+    env:
+      NAMESPACE: ml-serving-staging
+      IMAGE_TAG: ${{ github.event.workflow_run.head_sha && 'sha-' || 'latest' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: v1.30.0
+
+      # En un entorno real, aquí se configuraría el kubeconfig
+      # desde un secret de GitHub (KUBE_CONFIG_STAGING)
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Get image tag
+        id: tag
+        run: |
+          SHORT_SHA=$(echo "${{ github.event.workflow_run.head_sha }}" | cut -c1-7)
+          echo "tag=sha-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy preprocessing-service
+        run: |
+          kubectl set image deployment/preprocessing-service \
+            preprocessing-service=ghcr.io/${{ github.repository_owner }}/preprocessing-service:${{ steps.tag.outputs.tag }} \
+            -n ${{ env.NAMESPACE }}
+          kubectl rollout status deployment/preprocessing-service \
+            -n ${{ env.NAMESPACE }} --timeout=120s
+
+      - name: Deploy model-manager
+        run: |
+          kubectl set image deployment/model-manager \
+            model-manager=ghcr.io/${{ github.repository_owner }}/model-manager:${{ steps.tag.outputs.tag }} \
+            -n ${{ env.NAMESPACE }}
+          kubectl rollout status deployment/model-manager \
+            -n ${{ env.NAMESPACE }} --timeout=180s
+
+      - name: Deploy inference-api
+        run: |
+          kubectl set image deployment/inference-api \
+            inference-api=ghcr.io/${{ github.repository_owner }}/inference-api:${{ steps.tag.outputs.tag }} \
+            -n ${{ env.NAMESPACE }}
+          kubectl rollout status deployment/inference-api \
+            -n ${{ env.NAMESPACE }} --timeout=120s
+
+  integration-tests:
+    name: Integration Tests (Staging)
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install pytest httpx pytest-asyncio
+
+      - name: Run integration tests — preprocessing
+        env:
+          PREPROCESSING_URL: ${{ secrets.STAGING_PREPROCESSING_URL }}
+        run: pytest services/preprocessing-service/tests/integration/ -v --tb=short
+
+      - name: Run integration tests — model-manager
+        env:
+          MODEL_MANAGER_URL: ${{ secrets.STAGING_MODEL_MANAGER_URL }}
+        run: pytest services/model-manager/tests/integration/ -v --tb=short
+
+      - name: Run integration tests — inference-api
+        env:
+          INFERENCE_API_URL: ${{ secrets.STAGING_INFERENCE_API_URL }}
+          API_KEY: ${{ secrets.STAGING_API_KEY }}
+        run: pytest services/inference-api/tests/integration/ -v --tb=short
+
+  smoke-tests:
+    name: Smoke Tests (Staging)
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    environment: staging
+
+    steps:
+      - name: Health check — all services
+        run: |
+          echo "Verificando salud de servicios en staging..."
+
+          check_health() {
+            local url="$1"
+            local name="$2"
+            if curl -sf "${url}/health" --max-time 10 >/dev/null; then
+              echo "✓ $name: healthy"
+            else
+              echo "✗ $name: FAILED"
+              exit 1
+            fi
+          }
+
+          check_health "${{ secrets.STAGING_INFERENCE_API_URL }}"    "inference-api"
+          check_health "${{ secrets.STAGING_PREPROCESSING_URL }}"    "preprocessing-service"
+          check_health "${{ secrets.STAGING_MODEL_MANAGER_URL }}"    "model-manager"
+
+      - name: Prediction smoke test
+        run: |
+          echo "Probando predicción end-to-end..."
+          RESPONSE=$(curl -sf \
+            -X POST "${{ secrets.STAGING_INFERENCE_API_URL }}/predict" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ secrets.STAGING_API_KEY }}" \
+            -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}' \
+            --max-time 15)
+
+          PREDICTED=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['predicted_class'])")
+
+          if [[ "$PREDICTED" == "setosa" ]]; then
+            echo "✓ Predicción correcta: $PREDICTED"
+          else
+            echo "✗ Predicción incorrecta: $PREDICTED (esperado: setosa)"
+            exit 1
+          fi
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "Smoke tests fallaron — iniciando rollback automático..."
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+          for svc in inference-api preprocessing-service model-manager; do
+            kubectl rollout undo deployment/$svc -n ${{ env.NAMESPACE }} || true
+          done
+          echo "Rollback completado"
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "Deploy a staging exitoso!"
+          echo "Tag: ${{ github.event.workflow_run.head_sha }}"
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"

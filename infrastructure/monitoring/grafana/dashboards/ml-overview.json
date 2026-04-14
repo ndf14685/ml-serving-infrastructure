@@ -1,0 +1,134 @@
+{
+  "__comment__": "Dashboard ML Serving Overview — Importar en Grafana",
+  "title": "ML Serving Infrastructure — Overview",
+  "uid": "ml-serving-overview",
+  "description": "Dashboard principal del ML Serving Infrastructure. Muestra request rate, error rate, latencia y métricas del modelo.",
+  "tags": ["ml", "inference", "monitoring"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request Rate (req/s)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{
+        "expr": "sum(rate(inference_api_requests_total[5m]))",
+        "legendFormat": "Requests/s"
+      }],
+      "options": { "colorMode": "background" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Error Rate (%)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{
+        "expr": "sum(rate(inference_api_requests_total{http_status=~'5..'}[5m])) / sum(rate(inference_api_requests_total[5m])) * 100",
+        "legendFormat": "Error %"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Latencia p95 (ms)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, rate(inference_api_request_duration_seconds_bucket[10m])) * 1000",
+        "legendFormat": "p95 latency"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 500 },
+              { "color": "red", "value": 2000 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Modelo Cargado",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [{
+        "expr": "inference_api_model_loaded",
+        "legendFormat": "Model Status"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "text": "NO CARGADO", "color": "red" }, "1": { "text": "CARGADO", "color": "green" } }, "type": "value" }
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Predicciones por Clase (últimos 30m)",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [{
+        "expr": "sum by (predicted_class) (increase(inference_api_predictions_total[30m]))",
+        "legendFormat": "{{ predicted_class }}"
+      }]
+    },
+    {
+      "id": 6,
+      "title": "Distribución de Confianza",
+      "type": "histogram",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [{
+        "expr": "rate(inference_api_prediction_confidence_bucket[10m])",
+        "legendFormat": "{{ le }}"
+      }]
+    },
+    {
+      "id": 7,
+      "title": "Request Rate por Endpoint",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "rate(inference_api_requests_total[5m])",
+          "legendFormat": "{{ method }} {{ endpoint }} ({{ http_status }})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps" }
+      }
+    }
+  ]
+}

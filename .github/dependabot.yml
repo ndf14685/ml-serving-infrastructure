@@ -1,0 +1,67 @@
+# ============================================================
+# dependabot.yml — Actualizaciones automáticas de dependencias
+#
+# 📘 TÉCNICO:
+# Configura Dependabot para abrir PRs automáticamente cuando
+# hay nuevas versiones de dependencias Python y Actions.
+# ============================================================
+
+version: 2
+
+updates:
+  # ── Dependencias Python: inference-api ───────────────────
+  - package-ecosystem: pip
+    directory: /services/inference-api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - python
+      - inference-api
+    groups:
+      fastapi-stack:
+        patterns:
+          - "fastapi*"
+          - "uvicorn*"
+          - "pydantic*"
+    ignore:
+      # No actualizar automáticamente versiones major
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # ── Dependencias Python: preprocessing-service ───────────
+  - package-ecosystem: pip
+    directory: /services/preprocessing-service
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - python
+      - preprocessing
+
+  # ── Dependencias Python: model-manager ───────────────────
+  - package-ecosystem: pip
+    directory: /services/model-manager
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - python
+      - model-manager
+
+  # ── GitHub Actions ────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    labels:
+      - dependencies
+      - github-actions

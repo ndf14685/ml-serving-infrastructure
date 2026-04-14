@@ -1,0 +1,15 @@
+# Staging usa menos réplicas para ahorrar recursos
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-api
+spec:
+  replicas: 1
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preprocessing-service
+spec:
+  replicas: 1

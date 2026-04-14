@@ -1,0 +1,120 @@
+# ============================================================
+# alerts/rules.yml — Reglas de alertas de Prometheus
+#
+# 🧒 PARA NIÑOS:
+# Estas son las reglas del detective (Prometheus).
+# Le decimos: "Si más del 5% de los pedidos fallan,
+# manda una alerta de emergencia". Es como poner una
+# alarma que suena cuando algo va mal.
+#
+# 📘 TÉCNICO:
+# Reglas de alertas que Prometheus evalúa cada
+# evaluation_interval. Las alertas disparan
+# notificaciones via AlertManager.
+# ============================================================
+
+groups:
+
+  # ── Alertas de la Inference API ──────────────────────────
+  - name: inference-api-alerts
+    interval: 30s
+    rules:
+
+      # Alta tasa de errores
+      - alert: HighErrorRate
+        expr: |
+          rate(inference_api_requests_total{http_status=~"5.."}[5m])
+          /
+          rate(inference_api_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: inference-api
+        annotations:
+          summary: "Alta tasa de errores en Inference API"
+          description: >
+            La tasa de errores es {{ $value | humanizePercentage }},
+            superando el umbral del 5% por más de 5 minutos.
+            Investigar logs inmediatamente.
+
+      # Alta latencia
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            rate(inference_api_request_duration_seconds_bucket[10m])
+          ) > 2.0
+        for: 10m
+        labels:
+          severity: warning
+          service: inference-api
+        annotations:
+          summary: "Alta latencia en Inference API (p95)"
+          description: >
+            El p95 de latencia es {{ $value }}s,
+            superando el umbral de 2 segundos.
+
+      # Modelo no cargado
+      - alert: ModelNotLoaded
+        expr: inference_api_model_loaded == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: inference-api
+        annotations:
+          summary: "Modelo ML no cargado en Inference API"
+          description: >
+            El modelo ML no está disponible en memoria.
+            El endpoint /predict fallará con 503.
+
+      # Baja confianza en predicciones (posible model drift)
+      - alert: LowPredictionConfidence
+        expr: |
+          histogram_quantile(0.50,
+            rate(inference_api_prediction_confidence_bucket[30m])
+          ) < 0.70
+        for: 30m
+        labels:
+          severity: warning
+          service: inference-api
+        annotations:
+          summary: "Baja confianza en predicciones del modelo"
+          description: >
+            La mediana de confianza de predicciones es {{ $value }},
+            por debajo del umbral del 70%. Posible model drift.
+            Considerar reentrenamiento.
+
+  # ── Alertas de infraestructura ────────────────────────────
+  - name: infrastructure-alerts
+    rules:
+
+      # Pod en CrashLoopBackOff
+      - alert: PodCrashLooping
+        expr: |
+          rate(kube_pod_container_status_restarts_total{
+            namespace="ml-serving"
+          }[10m]) * 60 * 5 > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod en CrashLoopBackOff"
+          description: >
+            El pod {{ $labels.pod }} ha reiniciado más de 3 veces
+            en los últimos 10 minutos.
+
+      # Preprocessing con alta tasa de errores de validación
+      - alert: HighValidationErrorRate
+        expr: |
+          rate(preprocessing_requests_total{status="validation_error"}[5m])
+          /
+          rate(preprocessing_requests_total[5m]) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          service: preprocessing-service
+        annotations:
+          summary: "Alta tasa de errores de validación"
+          description: >
+            El {{ $value | humanizePercentage }} de las requests
+            de preprocesamiento fallan por validación.
+            Posible cambio en el formato de datos de entrada.

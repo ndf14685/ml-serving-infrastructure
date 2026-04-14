@@ -1,0 +1,71 @@
+# ============================================================
+# prometheus.yml — Configuración de Prometheus
+#
+# 🧒 PARA NIÑOS:
+# Prometheus es como un detective que cada cierto tiempo
+# va a visitar a cada servicio y les pregunta:
+# "¿Cuántas personas te visitaron? ¿Cuánto tardaste?
+#  ¿Estás bien?" y anota todo en su libreta.
+#
+# 📘 TÉCNICO:
+# Define los "scrape jobs": targets de los que Prometheus
+# recolecta métricas. Cada servicio expone /metrics.
+# ============================================================
+
+global:
+  # Cada cuánto tiempo recolectar métricas (15s = balance entre granularidad y storage)
+  scrape_interval: 15s
+  # Cada cuánto evaluar las reglas de alertas
+  evaluation_interval: 15s
+  # Timeout por scrape
+  scrape_timeout: 10s
+  # Labels que se agregan a TODAS las métricas recolectadas
+  external_labels:
+    cluster: "local-minikube"
+    environment: "development"
+
+# ── Archivos de reglas de alertas ────────────────────────────
+rule_files:
+  - "/etc/prometheus/rules.yml"
+
+# ── Configuración del AlertManager ──────────────────────────
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ["alertmanager:9093"]
+
+# ── Jobs de recolección de métricas ──────────────────────────
+scrape_configs:
+
+  # Prometheus se monitorea a sí mismo
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Inference API
+  - job_name: "inference-api"
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["inference-api:8000"]
+        labels:
+          service: "inference-api"
+          team: "ml-platform"
+
+  # Preprocessing Service
+  - job_name: "preprocessing-service"
+    metrics_path: "/metrics"
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["preprocessing-service:8001"]
+        labels:
+          service: "preprocessing-service"
+
+  # Model Manager
+  - job_name: "model-manager"
+    metrics_path: "/metrics"
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["model-manager:8002"]
+        labels:
+          service: "model-manager"

@@ -1,0 +1,49 @@
+# ============================================================
+# namespace.yaml — Namespace y cuotas de recursos
+#
+# 📘 TÉCNICO:
+# Aísla todos los recursos del proyecto en el namespace
+# "ml-serving". ResourceQuota limita el consumo total;
+# LimitRange establece defaults y máximos por pod.
+# ============================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ml-serving
+  labels:
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+    environment: production
+
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ml-serving-quota
+  namespace: ml-serving
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 4Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    pods: "20"
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ml-serving-limits
+  namespace: ml-serving
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 2Gi

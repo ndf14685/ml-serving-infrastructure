@@ -1,0 +1,94 @@
+# ============================================================
+# rbac/rbac.yaml — Service Accounts y RBAC
+#
+# 📘 TÉCNICO:
+# Cada servicio tiene su propio ServiceAccount con mínimo
+# privilegio. Ningún servicio tiene acceso a la API de K8s
+# a menos que sea estrictamente necesario.
+# ============================================================
+
+# ── Service Accounts ─────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: inference-api-sa
+  namespace: ml-serving
+  labels:
+    app: inference-api
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: preprocessing-sa
+  namespace: ml-serving
+  labels:
+    app: preprocessing-service
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: model-manager-sa
+  namespace: ml-serving
+  labels:
+    app: model-manager
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+automountServiceAccountToken: false
+
+---
+# ── Role: Model Manager puede leer ConfigMaps y Secrets ──────
+# (necesario para leer su propia configuración via API si lo necesita)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ml-serving-reader
+  namespace: ml-serving
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: model-manager-reader
+  namespace: ml-serving
+subjects:
+  - kind: ServiceAccount
+    name: model-manager-sa
+    namespace: ml-serving
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ml-serving-reader
+
+---
+# ── PodDisruptionBudget: mínimo 1 pod disponible ─────────────
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: inference-api-pdb
+  namespace: ml-serving
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: inference-api
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: preprocessing-pdb
+  namespace: ml-serving
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: preprocessing-service

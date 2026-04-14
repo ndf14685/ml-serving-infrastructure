@@ -1,0 +1,168 @@
+# ============================================================
+# docker-compose.yml — Entorno local de desarrollo
+#
+# 🧒 PARA NIÑOS:
+# Este archivo es como una receta para levantar TODOS los
+# servicios juntos con un solo comando. Es como apretar
+# un botón y que toda la cocina se ponga a funcionar sola.
+#
+# 📘 USO:
+#   docker compose up --build   → Construye y levanta todo
+#   docker compose down          → Para y elimina contenedores
+#   docker compose logs -f       → Ver logs en tiempo real
+#
+# 📘 TÉCNICO:
+# Define 5 servicios con su red interna, volúmenes y
+# dependencias. Los servicios se comunican por nombre DNS
+# (ej: http://preprocessing-service:8001) gracias a la red
+# compartida "ml-network".
+# ============================================================
+
+services:
+
+  # ── Model Manager ────────────────────────────────────────
+  model-manager:
+    build:
+      context: ./services/model-manager
+      dockerfile: Dockerfile
+    container_name: ml-model-manager
+    environment:
+      - MODEL_PATH=/app/models/iris_model.pkl
+      - MODEL_VERSION=1.0.0
+      - MODEL_MANAGER_PORT=8002
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    ports:
+      - "8002:8002"
+    volumes:
+      # Persistir el modelo entre reinicios del contenedor
+      - model-data:/app/models
+    networks:
+      - ml-network
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # ── Preprocessing Service ─────────────────────────────────
+  preprocessing-service:
+    build:
+      context: ./services/preprocessing-service
+      dockerfile: Dockerfile
+    container_name: ml-preprocessing
+    environment:
+      - PREPROCESSING_PORT=8001
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    ports:
+      - "8001:8001"
+    networks:
+      - ml-network
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # ── Inference API ─────────────────────────────────────────
+  inference-api:
+    build:
+      context: ./services/inference-api
+      dockerfile: Dockerfile
+    container_name: ml-inference-api
+    environment:
+      # SEGURIDAD: La API_KEY se lee del archivo .env (nunca hardcodeada)
+      - API_KEY=${API_KEY:?API_KEY es requerida. Copia .env.example como .env}
+      - API_PORT=8000
+      - MODEL_PATH=/app/models/iris_model.pkl
+      - MODEL_VERSION=${MODEL_VERSION:-1.0.0}
+      - PREPROCESSING_SERVICE_URL=http://preprocessing-service:8001
+      - MODEL_MANAGER_URL=http://model-manager:8002
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    ports:
+      - "8000:8000"
+    volumes:
+      # Compartir el volumen del modelo con model-manager
+      - model-data:/app/models:ro  # read-only en inference-api
+    networks:
+      - ml-network
+    depends_on:
+      model-manager:
+        condition: service_healthy
+      preprocessing-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── Prometheus ────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: ml-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/monitoring/prometheus/alerts/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    networks:
+      - ml-network
+    restart: unless-stopped
+
+  # ── Grafana ───────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: ml-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD requerida}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      # Deshabilitar telemetría para privacidad
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    volumes:
+      - ./infrastructure/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infrastructure/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - ml-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+# ── Redes ─────────────────────────────────────────────────
+networks:
+  ml-network:
+    driver: bridge
+    name: ml-serving-network
+
+# ── Volúmenes persistentes ────────────────────────────────
+volumes:
+  # Almacena el modelo ML entrenado
+  model-data:
+    name: ml-model-data
+  # Datos de métricas de Prometheus
+  prometheus-data:
+    name: ml-prometheus-data
+  # Dashboards y configuración de Grafana
+  grafana-data:
+    name: ml-grafana-data

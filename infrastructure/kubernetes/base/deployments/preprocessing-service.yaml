@@ -1,0 +1,80 @@
+# ============================================================
+# deployments/preprocessing-service.yaml
+#
+# 📘 TÉCNICO:
+# Deployment del Preprocessing Service con 2 réplicas.
+# Servicio stateless, no necesita volumen persistente.
+# ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: preprocessing-service
+  namespace: ml-serving
+  labels:
+    app: preprocessing-service
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+    app.kubernetes.io/component: preprocessing
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: preprocessing-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: preprocessing-service
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: preprocessing-service
+          image: ghcr.io/REPLACE_USERNAME/preprocessing-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8001
+              name: http
+          envFrom:
+            - configMapRef:
+                name: ml-serving-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

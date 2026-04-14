@@ -1,0 +1,69 @@
+# ============================================================
+# .gitignore — ML Serving Infrastructure
+# REGLA PRINCIPAL: NUNCA commitear secretos, credenciales
+# ni archivos generados automáticamente.
+# ============================================================
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# --- Secretos y credenciales (NUNCA al repo) ---
+.env
+*.env
+*.pem
+*.key
+*.crt
+*secret*
+*credentials*
+kubeconfig
+.kube/
+
+# --- Modelos ML serializados (pueden ser grandes) ---
+*.pkl
+*.joblib
+*.h5
+*.onnx
+# Excepción: el modelo de ejemplo para tests
+!services/model-manager/models/.gitkeep
+
+# --- Terraform state (contiene información sensible) ---
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+
+# --- Docker ---
+.dockerignore
+
+# --- IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Node (para tools) ---
+node_modules/

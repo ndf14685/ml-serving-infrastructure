@@ -1,0 +1,45 @@
+# ============================================================
+# overlays/staging/kustomization.yaml — Overlay de Staging
+#
+# 📘 TÉCNICO:
+# Aplica sobre la base common (base/) con ajustes para staging:
+# - 1 réplica por servicio (ahorra recursos)
+# - Log level DEBUG para visibilidad
+# - Imagen con tag del branch, no "latest"
+#
+# USO:
+#   kubectl apply -k infrastructure/kubernetes/overlays/staging/
+# ============================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ml-serving-staging
+
+resources:
+  - ../../base/namespace.yaml
+  - ../../base/configmaps/ml-config.yaml
+  - ../../base/secrets/api-secrets.yaml
+  - ../../base/deployments/model-manager.yaml
+  - ../../base/deployments/preprocessing-service.yaml
+  - ../../base/deployments/inference-api.yaml
+  - ../../base/services/services.yaml
+  - ../../base/hpa/hpa.yaml
+  - ../../base/rbac/rbac.yaml
+
+namePrefix: staging-
+
+commonLabels:
+  environment: staging
+
+patches:
+  - path: patches/replicas.yaml
+  - path: patches/configmap.yaml
+
+images:
+  - name: ghcr.io/REPLACE_USERNAME/inference-api
+    newTag: staging
+  - name: ghcr.io/REPLACE_USERNAME/preprocessing-service
+    newTag: staging
+  - name: ghcr.io/REPLACE_USERNAME/model-manager
+    newTag: staging

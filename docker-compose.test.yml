@@ -1,0 +1,121 @@
+# ============================================================
+# docker-compose.test.yml — Entorno para Integration Tests
+#
+# 🧒 PARA NIÑOS:
+# Es como un ensayo general antes de la obra de teatro.
+# Levantamos todos los servicios en modo "prueba" para
+# verificar que se comunican correctamente entre sí.
+#
+# 📘 USO:
+#   docker compose -f docker-compose.test.yml up --build -d
+#   docker compose -f docker-compose.test.yml run test-runner
+#   docker compose -f docker-compose.test.yml down
+#
+# 📘 TÉCNICO:
+# Usa credenciales fijas de prueba (no producción).
+# No incluye prometheus/grafana para reducir tiempo de startup.
+# ============================================================
+
+services:
+
+  model-manager:
+    build:
+      context: ./services/model-manager
+      dockerfile: Dockerfile
+    container_name: test-model-manager
+    environment:
+      - MODEL_PATH=/app/models/iris_model.pkl
+      - MODEL_VERSION=1.0.0
+      - MODEL_MANAGER_PORT=8002
+      - LOG_LEVEL=WARNING
+      - ENVIRONMENT=testing
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  preprocessing-service:
+    build:
+      context: ./services/preprocessing-service
+      dockerfile: Dockerfile
+    container_name: test-preprocessing
+    environment:
+      - PREPROCESSING_PORT=8001
+      - LOG_LEVEL=WARNING
+      - ENVIRONMENT=testing
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  inference-api:
+    build:
+      context: ./services/inference-api
+      dockerfile: Dockerfile
+    container_name: test-inference-api
+    environment:
+      - API_KEY=test-api-key-integration
+      - API_PORT=8000
+      - MODEL_PATH=/app/models/iris_model.pkl
+      - MODEL_VERSION=1.0.0
+      - PREPROCESSING_SERVICE_URL=http://preprocessing-service:8001
+      - MODEL_MANAGER_URL=http://model-manager:8002
+      - LOG_LEVEL=WARNING
+      - ENVIRONMENT=testing
+    volumes:
+      - test-model-data:/app/models:ro
+    networks:
+      - test-network
+    depends_on:
+      model-manager:
+        condition: service_healthy
+      preprocessing-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Runner de tests de integración ───────────────────────
+  test-runner:
+    build:
+      context: ./services/inference-api
+      dockerfile: Dockerfile
+    container_name: test-runner
+    environment:
+      - INFERENCE_API_URL=http://inference-api:8000
+      - PREPROCESSING_URL=http://preprocessing-service:8001
+      - MODEL_MANAGER_URL=http://model-manager:8002
+      - API_KEY=test-api-key-integration
+    networks:
+      - test-network
+    depends_on:
+      inference-api:
+        condition: service_healthy
+    command: >
+      sh -c "pip install pytest httpx pytest-asyncio --quiet &&
+             pytest tests/integration/ -v --tb=short"
+    profiles:
+      - test
+
+networks:
+  test-network:
+    driver: bridge
+    name: ml-test-network
+
+volumes:
+  test-model-data:
+    name: ml-test-model-data

@@ -1,0 +1,49 @@
+# ============================================================
+# ingress/ingress.yaml — Ingress Controller (nginx)
+#
+# 📘 TÉCNICO:
+# Enruta tráfico externo al inference-api.
+# Requiere: minikube addons enable ingress
+# ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ml-serving-ingress
+  namespace: ml-serving
+  labels:
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    # Rate limiting a nivel Ingress (complementa el de la app)
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ml-api.local
+      http:
+        paths:
+          - path: /predict
+            pathType: Prefix
+            backend:
+              service:
+                name: inference-api
+                port:
+                  number: 8000
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: inference-api
+                port:
+                  number: 8000
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: inference-api
+                port:
+                  number: 8000

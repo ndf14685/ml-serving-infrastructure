@@ -1,0 +1,188 @@
+# ============================================================
+# deploy-production.yml — Deploy a producción con Blue-Green
+#
+# 🧒 PARA NIÑOS:
+# Este es el proceso más importante y delicado. Antes de
+# cambiar el servicio real, creamos una copia (green),
+# la probamos bien, y si todo funciona movemos a todos
+# los usuarios a la copia nueva. ¡Sin interrupciones!
+#
+# 📘 TÉCNICO:
+# Deploy manual con aprobación requerida (environment protection).
+# Implementa blue-green deployment via selector swap.
+# Incluye smoke tests post-deploy y rollback automático.
+# ============================================================
+
+name: Deploy to Production (Blue-Green)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag de la imagen a desplegar (ej: sha-abc1234)"
+        required: true
+        type: string
+      confirm:
+        description: "Escribe 'DEPLOY' para confirmar el despliegue a producción"
+        required: true
+        type: string
+
+env:
+  K8S_NAMESPACE: ml-serving
+  REGISTRY: ghcr.io/${{ github.repository_owner }}/ml-serving
+
+jobs:
+
+  # ── Validación pre-deploy ─────────────────────────────────
+  validate:
+    name: 🔍 Validar inputs
+    runs-on: ubuntu-latest
+    environment: production  # Requiere aprobación del equipo
+
+    steps:
+      - name: Verificar confirmación
+        run: |
+          if [[ "${{ github.event.inputs.confirm }}" != "DEPLOY" ]]; then
+            echo "❌ Confirmación incorrecta. Debes escribir 'DEPLOY'"
+            exit 1
+          fi
+          echo "✅ Confirmación válida"
+
+      - name: Verificar que el tag existe en el registry
+        run: |
+          # Verificar que la imagen existe antes de intentar el deploy
+          docker manifest inspect \
+            ${{ env.REGISTRY }}/inference-api:${{ github.event.inputs.image_tag }} \
+            || (echo "❌ Imagen no encontrada en el registry" && exit 1)
+
+  # ── Blue-Green Deploy ─────────────────────────────────────
+  blue-green-deploy:
+    name: 🟢 Blue-Green Deploy
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configurar kubeconfig
+        run: |
+          echo "${{ secrets.KUBECONFIG_PRODUCTION }}" | base64 -d > kubeconfig
+          export KUBECONFIG=./kubeconfig
+
+      - name: Determinar color activo (blue o green)
+        id: current-color
+        run: |
+          export KUBECONFIG=./kubeconfig
+          # Lee el selector actual del Service
+          CURRENT=$(kubectl get service inference-api \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='{.spec.selector.slot}' 2>/dev/null || echo "blue")
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          # El nuevo slot es el opuesto
+          if [[ "$CURRENT" == "blue" ]]; then
+            echo "new=green" >> $GITHUB_OUTPUT
+          else
+            echo "new=blue" >> $GITHUB_OUTPUT
+          fi
+          echo "🔵 Slot actual: $CURRENT → 🟢 Nuevo slot: $([ $CURRENT == blue ] && echo green || echo blue)"
+
+      - name: Desplegar nueva versión (slot ${{ steps.current-color.outputs.new }})
+        run: |
+          export KUBECONFIG=./kubeconfig
+          NEW_SLOT="${{ steps.current-color.outputs.new }}"
+          IMAGE_TAG="${{ github.event.inputs.image_tag }}"
+
+          # Aplicar deployment del nuevo slot con la nueva imagen
+          kubectl set image deployment/inference-api-${NEW_SLOT} \
+            inference-api=${{ env.REGISTRY }}/inference-api:${IMAGE_TAG} \
+            -n ${{ env.K8S_NAMESPACE }}
+
+          # Esperar que el nuevo deployment esté listo
+          kubectl rollout status deployment/inference-api-${NEW_SLOT} \
+            -n ${{ env.K8S_NAMESPACE }} \
+            --timeout=5m
+
+          echo "✅ Nuevo deployment listo en slot: $NEW_SLOT"
+
+      - name: Smoke tests en el nuevo slot (antes del switch)
+        id: smoke-test
+        run: |
+          export KUBECONFIG=./kubeconfig
+          NEW_SLOT="${{ steps.current-color.outputs.new }}"
+
+          # Port-forward temporal al nuevo slot para testing
+          kubectl port-forward \
+            service/inference-api-${NEW_SLOT} 8080:8000 \
+            -n ${{ env.K8S_NAMESPACE }} &
+          PF_PID=$!
+          sleep 5
+
+          # Smoke test: health check
+          curl -sf http://localhost:8080/health || \
+            (kill $PF_PID && echo "❌ Health check fallido" && exit 1)
+
+          # Smoke test: predicción de ejemplo
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/predict \
+            -H "X-API-Key: ${{ secrets.SMOKE_TEST_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}')
+
+          echo "Respuesta: $RESPONSE"
+          echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['predicted_class'] in ['setosa','versicolor','virginica']"
+
+          kill $PF_PID
+          echo "✅ Smoke tests pasados en slot: $NEW_SLOT"
+
+      - name: Cambiar tráfico al nuevo slot (Traffic Switch)
+        run: |
+          export KUBECONFIG=./kubeconfig
+          NEW_SLOT="${{ steps.current-color.outputs.new }}"
+
+          # El momento más crítico: cambiar el selector del Service
+          # Todo el tráfico migra instantáneamente al nuevo slot
+          kubectl patch service inference-api \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -p "{\"spec\":{\"selector\":{\"app\":\"inference-api\",\"slot\":\"${NEW_SLOT}\"}}}"
+
+          echo "🎯 Tráfico cambiado a slot: $NEW_SLOT"
+
+      - name: Verificación post-switch (30 segundos de observación)
+        run: |
+          export KUBECONFIG=./kubeconfig
+          echo "Observando 30 segundos post-switch..."
+          sleep 30
+
+          # Verificar que el nuevo slot sigue saludable
+          READY=$(kubectl get pods \
+            -l "app=inference-api,slot=${{ steps.current-color.outputs.new }}" \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -o jsonpath='{.items[*].status.containerStatuses[0].ready}')
+
+          if [[ "$READY" != *"true"* ]]; then
+            echo "❌ Pods no saludables post-switch. Iniciando rollback..."
+            exit 1
+          fi
+
+          echo "✅ Deploy completado exitosamente"
+          echo "### 🚀 Deploy Exitoso" >> $GITHUB_STEP_SUMMARY
+          echo "- **Slot activo**: ${{ steps.current-color.outputs.new }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Imagen**: ${{ github.event.inputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+
+      # ROLLBACK AUTOMÁTICO si algo falla
+      - name: Rollback automático
+        if: failure() && steps.smoke-test.conclusion == 'success'
+        run: |
+          export KUBECONFIG=./kubeconfig
+          PREVIOUS_SLOT="${{ steps.current-color.outputs.current }}"
+
+          echo "🔄 Iniciando rollback a slot: $PREVIOUS_SLOT"
+          kubectl patch service inference-api \
+            -n ${{ env.K8S_NAMESPACE }} \
+            -p "{\"spec\":{\"selector\":{\"app\":\"inference-api\",\"slot\":\"${PREVIOUS_SLOT}\"}}}"
+
+          echo "✅ Rollback completado. Tráfico restaurado a: $PREVIOUS_SLOT"

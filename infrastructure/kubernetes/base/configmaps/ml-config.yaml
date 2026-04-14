@@ -1,0 +1,22 @@
+# ============================================================
+# configmaps/ml-config.yaml — Configuración no sensible
+#
+# 📘 TÉCNICO:
+# Variables de entorno comunes a todos los servicios.
+# Valores sensibles (API_KEY) van en secrets/, no aquí.
+# ============================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-serving-config
+  namespace: ml-serving
+  labels:
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  MODEL_VERSION: "1.0.0"
+  MODEL_PATH: "/app/models/iris_model.pkl"
+  PREPROCESSING_SERVICE_URL: "http://preprocessing-service:8001"
+  MODEL_MANAGER_URL: "http://model-manager:8002"

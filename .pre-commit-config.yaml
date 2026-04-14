@@ -1,0 +1,50 @@
+# ============================================================
+# .pre-commit-config.yaml
+#
+# 🧒 PARA NIÑOS: Imagina que antes de mandar una carta,
+# alguien la revisa automáticamente para ver si tiene errores
+# de ortografía y si está bien escrita. Eso es lo que hacen
+# estos "hooks": revisan tu código ANTES de que lo guardes
+# en el repositorio.
+#
+# 📘 INSTALACIÓN: pre-commit install
+# 📘 EJECUCIÓN MANUAL: pre-commit run --all-files
+# ============================================================
+repos:
+  # ── Formateador de código Python ──────────────────────────
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        language_version: python3.11
+        args: ["--line-length=100"]
+
+  # ── Linter de código Python ───────────────────────────────
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.1.0
+    hooks:
+      - id: flake8
+        args: ["--max-line-length=100", "--extend-ignore=E203,W503"]
+
+  # ── Análisis de seguridad del código ──────────────────────
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.9
+    hooks:
+      - id: bandit
+        args: ["-ll", "-r"]  # -ll = solo severidad media o alta
+        exclude: tests/
+
+  # ── Validaciones generales ────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace        # Elimina espacios al final de líneas
+      - id: end-of-file-fixer          # Asegura newline al final de archivos
+      - id: check-yaml                 # Valida sintaxis YAML
+      - id: check-json                 # Valida sintaxis JSON
+      - id: check-merge-conflict       # Detecta conflictos de merge sin resolver
+      - id: detect-private-key         # Detecta claves privadas accidentalmente commiteadas
+      - id: check-added-large-files    # Bloquea archivos > 500KB
+        args: ["--maxkb=500"]
+      - id: no-commit-to-branch        # Evita commits directos a main
+        args: ["--branch", "main"]

@@ -1,0 +1,8 @@
+# Staging usa DEBUG logging para mayor visibilidad
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-serving-config
+data:
+  ENVIRONMENT: "staging"
+  LOG_LEVEL: "DEBUG"

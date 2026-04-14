@@ -1,0 +1,98 @@
+# ============================================================
+# deployments/model-manager.yaml
+#
+# 📘 TÉCNICO:
+# Deployment del Model Manager con 1 réplica (singleton).
+# Monta el PVC para persistir el modelo entrenado.
+# Tiene mayor initialDelaySeconds porque entrena el modelo
+# en startup si no existe.
+# ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-manager
+  namespace: ml-serving
+  labels:
+    app: model-manager
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+    app.kubernetes.io/component: model-management
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model-manager
+  strategy:
+    type: Recreate  # Recreate para evitar conflictos de escritura en el PVC
+  template:
+    metadata:
+      labels:
+        app: model-manager
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: model-manager
+          image: ghcr.io/REPLACE_USERNAME/model-manager:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8002
+              name: http
+          envFrom:
+            - configMapRef:
+                name: ml-serving-config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8002
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: model-storage
+              mountPath: /app/models
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: model-pvc
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-pvc
+  namespace: ml-serving
+  labels:
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

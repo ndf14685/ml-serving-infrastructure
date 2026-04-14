@@ -1,0 +1,96 @@
+# ============================================================
+# deployments/inference-api.yaml
+#
+# 📘 TÉCNICO:
+# Deployment de la Inference API con:
+# - 2 réplicas para alta disponibilidad
+# - RollingUpdate para deploy sin downtime
+# - SecurityContext con non-root y read-only filesystem
+# - Liveness + Readiness probes
+# ============================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-api
+  namespace: ml-serving
+  labels:
+    app: inference-api
+    app.kubernetes.io/part-of: ml-serving-infrastructure
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: inference-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: inference-api
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: inference-api
+          image: ghcr.io/REPLACE_USERNAME/inference-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: ml-serving-config
+          env:
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ml-api-secrets
+                  key: api-key
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: model-storage
+              mountPath: /app/models
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: model-pvc
+            readOnly: true
+        - name: tmp
+          emptyDir: {}

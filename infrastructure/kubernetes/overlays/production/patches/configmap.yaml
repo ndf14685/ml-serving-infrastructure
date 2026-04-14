@@ -1,0 +1,8 @@
+# Producción: INFO logging, docs deshabilitados
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-serving-config
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"

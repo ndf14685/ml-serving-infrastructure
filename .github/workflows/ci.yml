@@ -1,0 +1,198 @@
+# ============================================================
+# ci.yml — Pipeline de Integración Continua
+#
+# 🧒 PARA NIÑOS:
+# Cada vez que alguien propone un cambio en el código,
+# este archivo hace una revisión automática: comprueba
+# que el código esté bien escrito, que no tenga fallos
+# de seguridad, y que todas las pruebas pasen.
+# ¡Como un corrector automático de exámenes!
+#
+# 📘 TÉCNICO:
+# Se ejecuta en cada Pull Request a main o staging.
+# Jobs: lint → security → test → build (en ese orden).
+# Falla rápido: si lint falla, no se ejecutan los demás.
+# ============================================================
+
+name: CI — Lint, Security & Test
+
+on:
+  pull_request:
+    branches: [main, staging]
+  push:
+    branches: [main]
+
+# Cancela runs anteriores del mismo PR para ahorrar recursos
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+
+  # ── JOB 1: Lint y formato ─────────────────────────────────
+  lint:
+    name: 🔍 Lint & Format Check
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: [inference-api, preprocessing-service, model-manager]
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+
+      - name: Instalar dependencias de calidad
+        run: |
+          cd services/${{ matrix.service }}
+          pip install black flake8 --quiet
+
+      - name: Verificar formato con Black
+        run: |
+          cd services/${{ matrix.service }}
+          python -m black app/ --check --diff
+        continue-on-error: false
+
+      - name: Verificar estilo con Flake8
+        run: |
+          cd services/${{ matrix.service }}
+          python -m flake8 app/ --max-line-length=100 --statistics
+
+  # ── JOB 2: Análisis de seguridad del código ──────────────
+  security-lint:
+    name: 🔒 Security Lint (Bandit)
+    runs-on: ubuntu-latest
+    needs: lint  # Solo corre si lint pasa
+
+    strategy:
+      matrix:
+        service: [inference-api, preprocessing-service, model-manager]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Instalar Bandit
+        run: pip install bandit --quiet
+
+      - name: Análisis de seguridad con Bandit
+        run: |
+          cd services/${{ matrix.service }}
+          # -ll: reporta issues de severidad media o alta
+          # -ii: reporta issues de confianza media o alta
+          # Falla si encuentra HIGH severity
+          python -m bandit -r app/ -ll -ii -f json -o bandit-report.json || true
+          python -m bandit -r app/ -ll -ii
+        continue-on-error: false
+
+      - name: Subir reporte de seguridad
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report-${{ matrix.service }}
+          path: services/${{ matrix.service }}/bandit-report.json
+
+  # ── JOB 3: Tests unitarios ────────────────────────────────
+  unit-tests:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint  # Solo corre si lint pasa
+
+    strategy:
+      matrix:
+        service: [inference-api, preprocessing-service, model-manager]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+
+      - name: Instalar dependencias
+        run: |
+          cd services/${{ matrix.service }}
+          pip install -r requirements.txt --quiet
+
+      - name: Ejecutar unit tests con cobertura
+        run: |
+          cd services/${{ matrix.service }}
+          python -m pytest tests/unit/ \
+            --cov=app \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --cov-fail-under=80 \
+            -v \
+            --tb=short
+        env:
+          # API_KEY necesaria para tests de autenticación
+          API_KEY: test-api-key-for-ci
+
+      - name: Subir reporte de cobertura
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: services/${{ matrix.service }}/coverage.xml
+          flags: ${{ matrix.service }}
+          fail_ci_if_error: false
+
+  # ── JOB 4: Build de imágenes Docker ──────────────────────
+  docker-build:
+    name: 🐳 Docker Build & Scan
+    runs-on: ubuntu-latest
+    needs: [unit-tests, security-lint]
+
+    strategy:
+      matrix:
+        service: [inference-api, preprocessing-service, model-manager]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build imagen Docker (sin push)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          push: false
+          tags: ml-serving/${{ matrix.service }}:ci-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Build args para metadatos
+          build-args: |
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Escanear vulnerabilidades con Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ml-serving/${{ matrix.service }}:ci-test
+          format: sarif
+          output: trivy-results-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
+          # Falla si hay vulnerabilidades CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Subir resultados de Trivy a Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results-${{ matrix.service }}.sarif
