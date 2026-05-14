@@ -1,0 +1,29 @@
+schema_version: 1
+project_id: ml-serving-infrastructure
+name: ML Serving Infrastructure
+stage: done
+priority: low
+effort: large
+progress_pct: 95
+health: green
+summary: >-
+  Showcase de DevOps: infraestructura completa para servir un modelo Iris con
+  3 microservicios, CI, Terraform, Kubernetes y observabilidad. Entregado como
+  take-home; se mantiene en modo vitrina.
+current_focus:
+  - mantener buen estado público para portfolio
+  - asegurar que el README quede claro para visitantes técnicos
+pending:
+  - revisar que el CI siga verde
+  - dejar instrucciones de quickstart probadas
+next_action: revisar README/quickstart y dejarlo en estado "vitrina" estable
+blockers: []
+needs_decision: false
+can_delegate: true
+quick_win: agregar nota en README aclarando que es un take-home cerrado, no producto vivo
+last_human_update: 2026-05-14T10:10:00-03:00
+links:
+  repo: https://github.com/ndf14685/ml-serving-infrastructure
+notes: >-
+  Proyecto cerrado en alcance original (take-home). Se conserva como showcase
+  público; futuros cambios solo son cosmética/documentación.
