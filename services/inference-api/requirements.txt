@@ -15,6 +15,6 @@ pytest-cov==5.0.0
 pytest-asyncio==0.23.7
 
 # Calidad
-black==24.4.2
+black==24.10.0
 flake8==7.1.0
 bandit==1.7.9
